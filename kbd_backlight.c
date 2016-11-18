@@ -23,81 +23,193 @@
 #include <fcntl.h>
 #include <err.h>
 
-void
-print_help()
+typedef enum {
+     ACTION_NONE = 0,
+     ACTION_UP,
+     ACTION_DOWN,
+     ACTION_SET,
+     ACTION_ZERO,
+     ACTION_MAX,
+} Action_t;
+
+typedef struct {
+     Action_t action;
+     union {
+          int level;
+          int increment;
+     };
+} Arguments_t;
+
+void print_help(char* program, int max_level)
 {
-	printf("Usage:\n");
-	printf("kbd_backlight [-e | -d | -l<level>]\n");
-	printf("  where <level> is a number between 0 and 100.\n");
+     printf("This program alters the key backlight illumination value.\n\n");
+
+     printf("Usage: %s [Options] \n", program);
+     printf("Options:\n");
+     printf("  -u <increment> Increase brightness by increment.\n");
+     printf("  -d <increment> Decrease brightness by increment.\n");
+     printf("  -s <level> Set brightness to level between 0 and %d\n\n", max_level);
+     printf("  -m Set brightness to maximum value (%d)\n", max_level);
+     printf("  -o Set brightness to 0.\n");
+     printf("  -h Help. This message\n\n" );
+
+     printf("Examples:\n");
+     printf("$ %s -u 5\n", program);
+     printf("$ %s -d 10\n", program);
+     printf("$ %s -s 100\n", program);
+     printf("$ %s -m\n", program);
+     printf("$ %s -o\n", program);
+     printf("$ %s -m\n\n", program);
 }
 
-int
-main(int argc, char *argv[])
+int get_args(int argc, char* argv[],
+             int max_level,
+             Arguments_t* args)
 {
-	int ch;
-	int eflg, dflg, lflg;
-	int level = -1;
-	char level_str[4] = "";
-	int fd;
-	const char *kbd_file = "/sys/class/leds/kbd_backlight/brightness";
+     int ch;
+     while ((ch = getopt(argc, argv, "u:d:s:moh")) != -1) {
+          switch (ch) {
+          case 'u':
+               args->action = ACTION_UP;
+               args->increment = atoi(optarg);
+               if (args->increment < 0 || args->increment > max_level) {
+                    print_help(argv[0], max_level);
+                    return EXIT_FAILURE;
+               }
+               break;
+          case 'd':
+               args->action = ACTION_DOWN;
+               args->increment = atoi(optarg);
+               if (args->increment < 0 || args->increment > max_level) {
+                    print_help(argv[0], max_level);
+                    return EXIT_FAILURE;
+               }
+               break;
+          case 's':
+               args->action = ACTION_SET;
+               args->level = atoi(optarg);
+               if (args->level < 0 || args->level > max_level) {
+                    print_help(argv[0], max_level);
+                    return EXIT_FAILURE;
+               }
+               break;
+          case 'm':
+               args->action = ACTION_MAX;
+               break;
+          case 'o':
+               args->action = ACTION_ZERO;
+               break;
+          case '?':
+          case 'h':
+          default:
+               print_help(argv[0], max_level);
+               return EXIT_FAILURE;
+          }
 
-	eflg = dflg = lflg = 0;
+          /* Only process the first argument */
+          if (args->action != ACTION_NONE) {
+               break;
+          }
+     }
 
-	while ((ch = getopt(argc, argv, "edhl:")) != -1) {
-		switch (ch) {
-		case 'e':
-			eflg = 1;
-			if (dflg || lflg) {
-				print_help();
-				return EXIT_FAILURE;
-			}
+     return EXIT_SUCCESS;
+}
 
-			level = 100;
-			break;
-		case 'd':
-			dflg = 1;
-			if (eflg || lflg) {
-				print_help();
-				return EXIT_FAILURE;
-			}
+void get_max_level(int* max_level)
+{
+     const char* max_file = "/sys/class/leds/smc::kbd_backlight/max_brightness";
+     FILE* fp_max_level = NULL;
 
-			level = 0;
-			break;
-		case 'l':
-			lflg = 1;
-			if (dflg || eflg) {
-				print_help();
-				return EXIT_FAILURE;
-			}
+     *max_level = 100; /* Default value */
 
-			level = atoi(optarg);
-			if (level < 0 || level > 100) {
-				print_help();
-				return EXIT_FAILURE;
-			}
-			break;
-		case '?':
-		case 'h':
-		default:
-			print_help();
-			return EXIT_FAILURE;
-		}
-	}
+     fp_max_level = fopen(max_file, "r");
+     if (fp_max_level == NULL) {
+          fprintf(stderr, "Unable to obtain maximum level from %s", max_file);
+          goto clean_exit;
+     }
 
-	if (level == -1) {
-		print_help();
-		return EXIT_FAILURE;
-	} else {
-		snprintf(level_str, sizeof level_str, "%d", level);
-	}
+     fscanf(fp_max_level, "%d", max_level);
 
-	fd = open(kbd_file, O_TRUNC | O_WRONLY);
+clean_exit:
+     fclose(fp_max_level);
+}
 
-	if (fd == -1) {
-		err(1, "%s", kbd_file);
-	}
+int change_level(Arguments_t args,
+                 int max_level)
+{
+     int rc = EXIT_SUCCESS;
 
-	write(fd, level_str, strlen(level_str));
+     const char* kbd_file = "/sys/class/leds/smc::kbd_backlight/brightness";
+     FILE *fp_level = NULL;
 
-	close(fd);
+     fp_level = fopen(kbd_file, "w+");
+     if (fp_level == NULL) {
+          err(1, "%s", kbd_file);
+          rc = EXIT_FAILURE;
+          goto clean_exit;
+     }
+
+     int curr_level;
+     fscanf(fp_level, "%d", &curr_level);
+
+     int new_level = 0;
+     switch (args.action) {
+     case ACTION_NONE:
+          rc = EXIT_FAILURE;
+          goto clean_exit;
+     case ACTION_UP:
+          new_level = curr_level + args.increment;
+          break;
+     case ACTION_DOWN:
+          new_level = curr_level - args.increment;
+          break;
+     case ACTION_SET:
+          new_level = args.level;
+          break;
+     case ACTION_ZERO:
+          new_level = 0;
+          break;
+     case ACTION_MAX:
+          new_level = max_level;
+          break;
+     }
+
+     if (new_level > max_level) {
+          new_level = max_level;
+     }
+     else if (new_level < 0) {
+          new_level = 0;
+     }
+
+     fprintf(fp_level, "%d", new_level);
+
+     printf("Changed level from %d to %d\n",
+             curr_level, new_level);
+
+clean_exit:
+     fclose(fp_level);
+     return rc;
+}
+
+int main(int argc, char* argv[])
+{
+     Arguments_t args = {0};
+     int max_level = 0;
+
+     /* Get the maximum brightness level from the system */
+     get_max_level(&max_level);
+
+     /* Parse input arguments */
+     int rc = get_args(argc, argv, max_level, &args);
+     if (rc) {
+          return rc;
+     }
+
+     /* Change the level as specified in arguments */
+     rc = change_level(args, max_level);
+     if (rc) {
+          return rc;
+     }
+
+     return EXIT_SUCCESS;
 }
