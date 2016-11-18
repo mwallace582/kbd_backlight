@@ -3,18 +3,26 @@ Controls the keyboard backlight on Linux
 
 Options:
 
--e
+-m
 
-  Enable, set to 100%
+  Maximum, set to 100%
   
--d
+-o
 
-  Disable, set to 0%
+  Off, set to 0%
 
--l <num>
+-s <level>
 
-  Set the level to <num> - must be between 0 and 100
+  Set the level to <level> - must be between 0 and maximum
 
-This is hardcoded to use /sys/class/leds/kbd_backlight/brightness.  If
+-u <increment>
+
+  Increment the level by <increment> - must be between 0 and maximum
+
+-d <increment>
+
+  Decrement the level by <increment> - must be between 0 and maximum
+
+This is hardcoded to use `/sys/class/leds/kbd_backlight/brightness`.  If
 your system does not use this file for backlight control, then this
 program isn't for you.
